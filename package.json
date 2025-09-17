@@ -1,7 +1,9 @@
 {
-    "name": "esap-events-api",
-    "version": "1.0.0",
-    "dependencies": {
-      "googleapis": "^131.0.0"
-    }
+  "name": "esap-api",
+  "version": "1.0.0",
+  "license": "MIT",
+  "private": true,
+  "dependencies": {
+    "googleapis": "^131.0.0"
   }
+}
