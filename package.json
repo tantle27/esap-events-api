@@ -2,7 +2,5 @@
   "name": "esap-events-api",
   "private": true,
   "type": "module",
-  "dependencies": {
-    "googleapis": "^131.0.0"
-  }
+  "dependencies": { "googleapis": "^131.0.0" }
 }

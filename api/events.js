@@ -23,8 +23,7 @@ function mustEnv(name) {
 
 function calendarClient() {
   const email = mustEnv("GOOGLE_SA_EMAIL");
-  const rawKey = mustEnv("GOOGLE_SA_PRIVATE_KEY");
-  const key = rawKey.replace(/\\n/g, "\n");
+  const key = mustEnv("GOOGLE_SA_PRIVATE_KEY").replace(/\\n/g, "\n");
   const auth = new google.auth.JWT(
     email,
     undefined,
