@@ -1,4 +1,4 @@
-// api/events.ts (Next.js / Vercel Serverless Function)
+// api/events.ts
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { google } from "googleapis";
 
@@ -30,55 +30,67 @@ function calendarClient() {
     email,
     undefined,
     key,
-    ["https://www.googleapis.com/auth/calendar.events"],
+    ["https://www.googleapis.com/auth/calendar.events"]
   );
   return google.calendar({ version: "v3", auth });
 }
 
-// Build EXDATE line (RFC5545) if provided as ['YYYY-MM-DD', ...]
-function buildExDateLine(exDates: string[] | undefined) {
-  if (!exDates?.length) return null;
-  // Use DATE (floating) format YYYYMMDD to match all-day skips; for timed events use Zulu midnight
-  const dates = exDates
-    .map(d => d.replaceAll("-", "")) // YYYYMMDD
-    .filter(s => /^\d{8}$/.test(s));
-  if (!dates.length) return null;
-  return `EXDATE;VALUE=DATE:${dates.join(",")}`;
+// exDates: ["YYYY-MM-DD", ...]; build EXDATE matching a TIMED DTSTART using TZ
+function buildTimedExDateLines(
+  exDates: string[] | undefined,
+  startLocal: string, // "YYYY-MM-DDTHH:mm[:ss]"
+  tz: string
+) {
+  if (!exDates?.length) return [];
+  const [, timePart = "00:00:00"] = startLocal.split("T");
+  const hhmmss = timePart.length === 5 ? `${timePart}:00` : timePart; // ensure :ss
+
+  const stamp = (d: string) =>
+    `${d.replaceAll("-", "")}T${hhmmss.replaceAll(":", "")}`;
+
+  // Use TZID so Google matches local wall-clock exceptions
+  return [
+    `EXDATE;TZID=${tz}:${exDates.map(stamp).join(",")}`,
+  ];
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     allowCors(req, res);
     if (req.method === "OPTIONS") return res.status(204).end();
-
-    if (req.method === "GET") {
-      return res.status(200).json({ ok: true, route: "/api/events", version: 2 });
-    }
+    if (req.method === "GET") return res.status(200).json({ ok: true, route: "/api/events", version: 3 });
     if (req.method !== "POST") return res.status(405).send("Use POST");
 
     const CALENDAR_ID = mustEnv("CALENDAR_ID");
     const TZ = process.env.TIMEZONE || "America/Indiana/Indianapolis";
 
-    const { title, start, end, location, desc, recurrence, exDates } = (req.body ?? {}) as {
+    const {
+      title, start, end, location, desc,
+      recurrence, exDates,
+    } = (req.body ?? {}) as {
       title?: string;
-      start?: string; // ISO
-      end?: string;   // ISO
+      start?: string; // "YYYY-MM-DDTHH:mm[:ss]" (local)
+      end?: string;
       location?: string;
       desc?: string;
-      recurrence?: string; // "RRULE:..."
-      exDates?: string[];  // ["YYYY-MM-DD", ...]
+      recurrence?: string | string[]; // accept either
+      exDates?: string[]; // ["YYYY-MM-DD", ...]
     };
 
     if (!title || !start || !end) return res.status(400).send("Missing title/start/end");
 
     const cal = calendarClient();
 
+    // Normalize recurrence to array of strings
     const recurrenceLines: string[] = [];
-    if (recurrence && /^RRULE:/i.test(recurrence)) {
-      recurrenceLines.push(recurrence.toUpperCase());
+    if (Array.isArray(recurrence)) {
+      for (const r of recurrence) if (/^RRULE:/i.test(r)) recurrenceLines.push(r.trim());
+    } else if (typeof recurrence === "string" && /^RRULE:/i.test(recurrence)) {
+      recurrenceLines.push(recurrence.trim());
     }
-    const exdateLine = buildExDateLine(exDates);
-    if (exdateLine) recurrenceLines.push(exdateLine);
+
+    // Add EXDATEs for timed events
+    recurrenceLines.push(...buildTimedExDateLines(exDates, start, TZ));
 
     const inserted = await cal.events.insert({
       calendarId: CALENDAR_ID,
@@ -86,8 +98,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         summary: title,
         description: desc,
         location,
-        start: { dateTime: new Date(start).toISOString(), timeZone: TZ },
-        end: { dateTime: new Date(end).toISOString(), timeZone: TZ },
+        // IMPORTANT: pass local dateTime string + timeZone; DO NOT convert to UTC/Z here
+        start: { dateTime: start, timeZone: TZ },
+        end:   { dateTime: end,   timeZone: TZ },
         ...(recurrenceLines.length ? { recurrence: recurrenceLines } : {}),
       },
     });
