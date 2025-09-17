@@ -1,4 +1,4 @@
-// api/events.ts
+// api/events.ts (Next.js / Vercel Serverless Function)
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { google } from "googleapis";
 
@@ -30,76 +30,55 @@ function calendarClient() {
     email,
     undefined,
     key,
-    ["https://www.googleapis.com/auth/calendar.events"]
+    ["https://www.googleapis.com/auth/calendar.events"],
   );
   return google.calendar({ version: "v3", auth });
 }
 
-/** Normalize arbitrary RRULE-ish input to a clean "RRULE:FREQ=...;..." */
-function normalizeRRule(line: string | undefined | null): string | null {
-  if (!line) return null;
-  let s = String(line).trim();
-  // If it starts with RRULE (any spacing), strip the label keeping the body
-  s = s.replace(/^RRULE\s*:/i, "");
-  // Remove all whitespaces inside; RFC5545 parameters shouldn’t contain spaces
-  s = s.replace(/\s+/g, "");
-  if (!s.toUpperCase().startsWith("FREQ=")) return null;
-  return `RRULE:${s.toUpperCase()}`;
-}
-
-/** Build EXDATE lines matching a TIMED DTSTART using TZID */
-function buildTimedExDateLines(
-  exDates: string[] | undefined,
-  startLocal: string, // "YYYY-MM-DDTHH:mm[:ss]"
-  tz: string
-) {
-  if (!exDates?.length) return [];
-  const [, timePart = "00:00:00"] = startLocal.split("T");
-  const hhmmss = timePart.length === 5 ? `${timePart}:00` : timePart; // ensure :ss
-
-  const stamp = (d: string) =>
-    `${d.replaceAll("-", "")}T${hhmmss.replaceAll(":", "")}`;
-
-  return [`EXDATE;TZID=${tz}:${exDates.map(stamp).join(",")}`];
+// Build EXDATE line (RFC5545) if provided as ['YYYY-MM-DD', ...]
+function buildExDateLine(exDates: string[] | undefined) {
+  if (!exDates?.length) return null;
+  // Use DATE (floating) format YYYYMMDD to match all-day skips; for timed events use Zulu midnight
+  const dates = exDates
+    .map(d => d.replaceAll("-", "")) // YYYYMMDD
+    .filter(s => /^\d{8}$/.test(s));
+  if (!dates.length) return null;
+  return `EXDATE;VALUE=DATE:${dates.join(",")}`;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     allowCors(req, res);
     if (req.method === "OPTIONS") return res.status(204).end();
-    if (req.method === "GET") return res.status(200).json({ ok: true, route: "/api/events", version: 4 });
+
+    if (req.method === "GET") {
+      return res.status(200).json({ ok: true, route: "/api/events", version: 2 });
+    }
     if (req.method !== "POST") return res.status(405).send("Use POST");
 
     const CALENDAR_ID = mustEnv("CALENDAR_ID");
     const TZ = process.env.TIMEZONE || "America/Indiana/Indianapolis";
 
-    const {
-      title, start, end, location, desc,
-      recurrence, exDates,
-    } = (req.body ?? {}) as {
+    const { title, start, end, location, desc, recurrence, exDates } = (req.body ?? {}) as {
       title?: string;
-      start?: string;  // local "YYYY-MM-DDTHH:mm[:ss]"
-      end?: string;    // local "YYYY-MM-DDTHH:mm[:ss]"
+      start?: string; // ISO
+      end?: string;   // ISO
       location?: string;
       desc?: string;
-      recurrence?: string | string[]; // client may send string or array
-      exDates?: string[];             // ["YYYY-MM-DD", ...]
+      recurrence?: string; // "RRULE:..."
+      exDates?: string[];  // ["YYYY-MM-DD", ...]
     };
 
     if (!title || !start || !end) return res.status(400).send("Missing title/start/end");
 
     const cal = calendarClient();
 
-    // Canonicalize recurrence into an array of cleaned RRULE lines
     const recurrenceLines: string[] = [];
-    const incoming = Array.isArray(recurrence) ? recurrence : [recurrence];
-    for (const r of incoming) {
-      const norm = normalizeRRule(r as string);
-      if (norm) recurrenceLines.push(norm);
+    if (recurrence && /^RRULE:/i.test(recurrence)) {
+      recurrenceLines.push(recurrence.toUpperCase());
     }
-
-    // Add EXDATEs for timed events (wall-clock)
-    recurrenceLines.push(...buildTimedExDateLines(exDates, start, TZ));
+    const exdateLine = buildExDateLine(exDates);
+    if (exdateLine) recurrenceLines.push(exdateLine);
 
     const inserted = await cal.events.insert({
       calendarId: CALENDAR_ID,
@@ -107,9 +86,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         summary: title,
         description: desc,
         location,
-        // pass local wall-clock + timeZone (do not convert to Z)
-        start: { dateTime: start, timeZone: TZ },
-        end:   { dateTime: end,   timeZone: TZ },
+        start: { dateTime: new Date(start).toISOString(), timeZone: TZ },
+        end: { dateTime: new Date(end).toISOString(), timeZone: TZ },
         ...(recurrenceLines.length ? { recurrence: recurrenceLines } : {}),
       },
     });
