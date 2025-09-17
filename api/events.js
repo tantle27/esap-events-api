@@ -1,13 +1,13 @@
 // api/events.ts (Next.js / Vercel Serverless Function)
-import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { google } from "googleapis";
+import { VercelRequest, VercelResponse } from '@vercel/node'; // BEGIN: Add missing imports
+import { google } from 'googleapis'; // BEGIN: Add missing imports
 
 const ORIGINS = new Set([
   "https://embedded-purdue.github.io",
   "http://localhost:3000",
 ]);
 
-function allowCors(req: VercelRequest, res: VercelResponse) {
+function allowCors(req, res) { // BEGIN: Remove type annotations
   const origin = String(req.headers.origin || "");
   if (ORIGINS.has(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
@@ -17,7 +17,7 @@ function allowCors(req: VercelRequest, res: VercelResponse) {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 }
 
-function mustEnv(name: string) {
+function mustEnv(name) { // BEGIN: Remove type annotations
   const v = process.env[name];
   if (!v) throw new Error(`Missing env: ${name}`);
   return v;
@@ -36,7 +36,7 @@ function calendarClient() {
 }
 
 // Build EXDATE line (RFC5545) if provided as ['YYYY-MM-DD', ...]
-function buildExDateLine(exDates: string[] | undefined) {
+function buildExDateLine(exDates) { // BEGIN: Remove type annotations
   if (!exDates?.length) return null;
   // Use DATE (floating) format YYYYMMDD to match all-day skips; for timed events use Zulu midnight
   const dates = exDates
@@ -46,7 +46,7 @@ function buildExDateLine(exDates: string[] | undefined) {
   return `EXDATE;VALUE=DATE:${dates.join(",")}`;
 }
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req, res) { // BEGIN: Remove type annotations
   try {
     allowCors(req, res);
     if (req.method === "OPTIONS") return res.status(204).end();
@@ -59,21 +59,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const CALENDAR_ID = mustEnv("CALENDAR_ID");
     const TZ = process.env.TIMEZONE || "America/Indiana/Indianapolis";
 
-    const { title, start, end, location, desc, recurrence, exDates } = (req.body ?? {}) as {
-      title?: string;
-      start?: string; // ISO
-      end?: string;   // ISO
-      location?: string;
-      desc?: string;
-      recurrence?: string; // "RRULE:..."
-      exDates?: string[];  // ["YYYY-MM-DD", ...]
-    };
+    const { title, start, end, location, desc, recurrence, exDates } = (req.body ?? {}); // BEGIN: Remove type assertion
 
     if (!title || !start || !end) return res.status(400).send("Missing title/start/end");
 
     const cal = calendarClient();
 
-    const recurrenceLines: string[] = [];
+    const recurrenceLines = []; // BEGIN: Remove type annotations
     if (recurrence && /^RRULE:/i.test(recurrence)) {
       recurrenceLines.push(recurrence.toUpperCase());
     }
@@ -93,7 +85,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
     return res.status(200).json({ id: inserted.data.id, htmlLink: inserted.data.htmlLink });
-  } catch (err: any) {
+  } catch (err) { // BEGIN: Remove type annotations
+    console.error("Create event failed:", err?.response?.data || err);
+    const msg = err?.response?.data?.error?.message || err?.message || "Internal error"; // BEGIN: Remove type annotations
     console.error("Create event failed:", err?.response?.data || err);
     const msg = err?.response?.data?.error?.message || err?.message || "Internal error";
     return res.status(500).send(msg);
